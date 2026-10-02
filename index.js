@@ -2,6 +2,7 @@ import express from "express";
 import { paymentMiddleware } from "@x402/express";
 import { x402ResourceServer, HTTPFacilitatorClient } from "@x402/core/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
+import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
 
 const app = express();
 app.use(express.json());
@@ -35,8 +36,51 @@ if (PAY_TO) {
         network: NETWORK,
         payTo: PAY_TO
       },
-      description: "Machine-readable market attention and anomaly snapshot for an asset.",
-      mimeType: "application/json"
+      description: "Machine-readable crypto market attention, price-change, volume-anomaly, and signal snapshot for a requested asset.",
+      mimeType: "application/json",
+      extensions: {
+        ...declareDiscoveryExtension({
+          input: { asset: "CRO" },
+          inputSchema: {
+            properties: {
+              asset: {
+                type: "string",
+                description: "Crypto asset ticker symbol, for example CRO."
+              }
+            },
+            required: ["asset"]
+          },
+          output: {
+            example: {
+              product: "Signal Snapshot V0",
+              asset: "CRO",
+              attention_score: 50,
+              attention_change: 0,
+              price_change: 0,
+              volume_anomaly: 0,
+              signal: "TEST_BASELINE",
+              freshness: "2026-10-02T20:19:12.223Z",
+              confidence: 0,
+              notice: "V0 plumbing test data; live signal sources are not connected yet."
+            },
+            schema: {
+              type: "object",
+              properties: {
+                product: { type: "string" },
+                asset: { type: "string" },
+                attention_score: { type: "number" },
+                attention_change: { type: "number" },
+                price_change: { type: "number" },
+                volume_anomaly: { type: "number" },
+                signal: { type: "string" },
+                freshness: { type: "string" },
+                confidence: { type: "number" },
+                notice: { type: "string" }
+              }
+            }
+          }
+        })
+      }
     }
   }, server));
 }
