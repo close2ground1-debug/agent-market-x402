@@ -36,40 +36,45 @@ const ASSETS = [
   { symbol: "CRO", cg: "crypto-com-chain", wiki: "Cronos_(blockchain)" }
 ];
 
+const WIKI_UA = "AgentMarketV1Research/0.2 (https://github.com/close2ground1-debug/agent-market-x402)";
 const isoDay = d => d.toISOString().slice(0, 10);
 const wikiDay = d => d.toISOString().slice(0, 10).replaceAll("-", "");
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-async function getJson(url, headers = {}) {
-  const r = await fetch(url, { headers });
-  if (!r.ok) throw new Error(`${r.status} ${r.statusText}: ${await r.text()}`);
-  return r.json();
-}
+async function getJson(url, headers = {}, label = "request") {
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    const r = await fetch(url, { headers });
+    if (r.ok) return r.json();
 
-async function resolveWikiTitle(title) {
-  const url = new URL("https://en.wikipedia.org/w/api.php");
-  url.searchParams.set("action", "query");
-  url.searchParams.set("format", "json");
-  url.searchParams.set("redirects", "1");
-  url.searchParams.set("titles", title.replaceAll("_", " "));
-  url.searchParams.set("origin", "*");
-  const j = await getJson(url, { "User-Agent": "AgentMarketV1Research/0.1" });
-  const page = Object.values(j.query?.pages || {})[0];
-  if (!page || page.missing !== undefined) throw new Error(`Wikipedia page not found: ${title}`);
-  return page.title;
+    const body = await r.text();
+    const retryable = r.status === 429 || r.status === 503 || r.status === 502;
+    if (!retryable || attempt === 5) {
+      throw new Error(`${r.status} ${r.statusText}: ${body}`);
+    }
+
+    const retryAfter = Number(r.headers.get("retry-after"));
+    const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
+      ? retryAfter * 1000
+      : Math.min(30000, 2000 * 2 ** (attempt - 1));
+
+    console.log(`  ${label} throttled (${r.status}); waiting ${Math.round(waitMs / 1000)}s before retry ${attempt + 1}/5...`);
+    await sleep(waitMs);
+  }
+  throw new Error("unreachable");
 }
 
 async function wikiViews(title) {
-  const resolved = await resolveWikiTitle(title);
-  const encoded = encodeURIComponent(resolved.replaceAll(" ", "_"));
+  // One Wikimedia request per asset. Titles are curated in ASSETS; bad mappings fail closed.
+  const encoded = encodeURIComponent(title);
   const url = `https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/en.wikipedia.org/all-access/user/${encoded}/daily/${wikiDay(START)}00/${wikiDay(END)}00`;
-  const j = await getJson(url, { "User-Agent": "AgentMarketV1Research/0.1" });
+  const j = await getJson(url, { "User-Agent": WIKI_UA }, `Wikimedia ${title}`);
   const map = new Map();
   for (const x of j.items || []) {
     const d = `${x.timestamp.slice(0,4)}-${x.timestamp.slice(4,6)}-${x.timestamp.slice(6,8)}`;
     map.set(d, x.views);
   }
-  return { resolved, map };
+  if (!map.size) throw new Error(`No Wikimedia observations for ${title}`);
+  return { resolved: title.replaceAll("_", " "), map };
 }
 
 async function marketData(id) {
@@ -78,7 +83,7 @@ async function marketData(id) {
   url.searchParams.set("from", String(Math.floor(START.getTime() / 1000)));
   url.searchParams.set("to", String(Math.floor((END.getTime() + 86400000 - 1) / 1000)));
   url.searchParams.set("precision", "full");
-  const j = await getJson(url, { "x-cg-demo-api-key": API_KEY });
+  const j = await getJson(url, { "x-cg-demo-api-key": API_KEY }, `CoinGecko ${id}`);
   const byDay = new Map();
   const ingest = (rows, key) => {
     for (const [ts, value] of rows || []) {
@@ -171,11 +176,13 @@ for (const asset of ASSETS) {
       events
     });
     await writeFile(`research/output/${asset.symbol}.json`, JSON.stringify({asset, wikipedia_title:wiki.resolved, rows, events}, null, 2));
-    await sleep(350);
   } catch (e) {
     console.error(`${asset.symbol}: ${e.message}`);
     manifest.failures.push({ symbol: asset.symbol, error: e.message });
   }
+
+  // Be deliberately polite to public APIs. One asset every ~2 seconds is plenty fast for this study.
+  await sleep(2000);
 }
 
 await writeFile("research/output/manifest.json", JSON.stringify(manifest, null, 2));
