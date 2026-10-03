@@ -111,6 +111,31 @@ function pct(a,b) {
   return Number.isFinite(a) && Number.isFinite(b) && a !== 0 ? (b/a - 1) * 100 : null;
 }
 
+function dailyMetrics(rows) {
+  const out = [];
+  for (let i=28; i<rows.length-7; i++) {
+    const hist = rows.slice(i-28,i).map(r=>Math.log1p(r.views));
+    const med = median(hist);
+    const dispersion = mad(hist, med);
+    if (!Number.isFinite(med) || !Number.isFinite(dispersion) || dispersion === 0) continue;
+    const attentionZ = 0.6745 * (Math.log1p(rows[i].views)-med) / dispersion;
+    const priorPrice7d = pct(rows[i-7]?.price, rows[i].price);
+    const priorVolBase = median(rows.slice(i-7,i).map(r=>r.volume));
+    const volumeRatio = priorVolBase ? rows[i].volume / priorVolBase : null;
+    out.push({
+      i,
+      date: rows[i].date,
+      attention_z: attentionZ,
+      prior_7d_return_pct: priorPrice7d,
+      volume_ratio_7d_median: volumeRatio,
+      return_1d_pct: pct(rows[i].price, rows[i+1].price),
+      return_3d_pct: pct(rows[i].price, rows[i+3].price),
+      return_7d_pct: pct(rows[i].price, rows[i+7].price)
+    });
+  }
+  return out;
+}
+
 function analyze(rows) {
   const events = [];
   for (let i=28; i<rows.length-7; i++) {
@@ -140,6 +165,51 @@ function analyze(rows) {
   return events;
 }
 
+function summarize(xs) {
+  const a = xs.filter(Number.isFinite);
+  if (!a.length) return { n: 0, median: null, mean: null, positive_pct: null };
+  return {
+    n: a.length,
+    median: +median(a).toFixed(3),
+    mean: +(a.reduce((s,x)=>s+x,0)/a.length).toFixed(3),
+    positive_pct: +(100*a.filter(x=>x>0).length/a.length).toFixed(1)
+  };
+}
+
+function controls(rows, events) {
+  const metrics = dailyMetrics(rows);
+  const eventDates = new Set(events.map(e=>e.date));
+  const eventMetrics = metrics.filter(x=>eventDates.has(x.date));
+  const ordinary = metrics.filter(x=>!eventDates.has(x.date) && Math.abs(x.attention_z) < 1);
+  const lateAttention = metrics.filter(x=>x.attention_z >= 3 && Math.abs(x.prior_7d_return_pct ?? 0) >= 10);
+
+  // Deterministic nearest-neighbor control: same asset, non-event day, closest absolute prior-7d return.
+  // A control date may be used only once within an asset.
+  const pool = metrics.filter(x=>!eventDates.has(x.date) && Math.abs(x.attention_z) < 3);
+  const used = new Set();
+  const volatilityMatched = [];
+  for (const e of eventMetrics) {
+    let best = null;
+    let bestDist = Infinity;
+    for (const x of pool) {
+      if (used.has(x.date)) continue;
+      const dist = Math.abs(Math.abs(x.prior_7d_return_pct ?? 999) - Math.abs(e.prior_7d_return_pct ?? 999));
+      if (dist < bestDist) { best = x; bestDist = dist; }
+    }
+    if (best) { used.add(best.date); volatilityMatched.push(best); }
+  }
+  return { ordinary, volatilityMatched, lateAttention };
+}
+
+function groupSummary(items) {
+  return {
+    events: items.length,
+    return_1d: summarize(items.map(x=>x.return_1d_pct)),
+    return_3d: summarize(items.map(x=>x.return_3d_pct)),
+    return_7d: summarize(items.map(x=>x.return_7d_pct))
+  };
+}
+
 await mkdir("research/output", { recursive: true });
 const manifest = {
   created_at: new Date().toISOString(),
@@ -151,7 +221,8 @@ const manifest = {
     forward_windows_days: [1,3,7]
   },
   assets: [],
-  failures: []
+  failures: [],
+  controls: { ordinary: [], volatility_matched: [], late_attention: [] }
 };
 
 for (const asset of ASSETS) {
@@ -168,6 +239,10 @@ for (const asset of ASSETS) {
       }
     }
     const events = analyze(rows);
+    const assetControls = controls(rows, events);
+    manifest.controls.ordinary.push(...assetControls.ordinary.map(x=>({symbol:asset.symbol,...x})));
+    manifest.controls.volatility_matched.push(...assetControls.volatilityMatched.map(x=>({symbol:asset.symbol,...x})));
+    manifest.controls.late_attention.push(...assetControls.lateAttention.map(x=>({symbol:asset.symbol,...x})));
     manifest.assets.push({
       symbol: asset.symbol,
       coingecko_id: asset.cg,
@@ -184,6 +259,13 @@ for (const asset of ASSETS) {
   // Be deliberately polite to public APIs. One asset every ~2 seconds is plenty fast for this study.
   await sleep(2000);
 }
+
+manifest.control_summary = {
+  frozen_events: groupSummary(manifest.assets.flatMap(a=>a.events)),
+  ordinary_days: groupSummary(manifest.controls.ordinary),
+  volatility_matched: groupSummary(manifest.controls.volatility_matched),
+  late_attention: groupSummary(manifest.controls.late_attention)
+};
 
 await writeFile("research/output/manifest.json", JSON.stringify(manifest, null, 2));
 const eventCount = manifest.assets.reduce((n,a)=>n+a.events.length,0);
