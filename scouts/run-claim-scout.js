@@ -1,11 +1,22 @@
-// Claim Scout #1 — autonomous patrol + zero-spend earning rail.
-// Runs from Render cron. It can register its worker identity, bind its dedicated
-// payout wallet, hunt public opportunities, and auto-claim only tasks that are
-// verified funded, require no worker bond/upfront spend, and explicitly expose
-// a machine-executable contract the current worker knows how to handle.
+// Claim Scout #1 — patrol + zero-spend earning rail.
+// Durable memory is available in GitHub Actions through Issue #1 and the
+// short-lived built-in GITHUB_TOKEN. Real external claims remain disabled
+// unless CLAIM_SCOUT_AUTO_CLAIM=enabled is explicitly configured.
 
 import { hunt, fetchJsonFeed } from "./claim-hunter.js";
 import { ensureWorkerIdentity, canAutoClaim, claimPaidTask } from "./claim-worker.js";
+import { hydrateLedger, exportLedger, ledgerSummary } from "./claim-ledger.js";
+import { durableMemoryAvailable, loadDurableMemory, saveDurableMemory } from "./claim-memory.js";
+
+let memoryLoad = { available: durableMemoryAvailable(), loaded: false, error: null };
+if (memoryLoad.available) {
+  try {
+    hydrateLedger(await loadDurableMemory());
+    memoryLoad.loaded = true;
+  } catch (error) {
+    memoryLoad.error = error?.message || String(error);
+  }
+}
 
 let worker = null;
 let workerError = null;
@@ -66,12 +77,8 @@ const sources = [
         requiresUpfrontSpend: bond > 0,
         successProbability: null,
         feesUsd: 0,
-        whyUnclaimed: bond
-          ? "Worker bond/upfront capital is required."
-          : "Open listing detected; task rules and acceptance criteria still require verification.",
-        evidence: funded
-          ? ["Listing reports funded escrow."]
-          : ["Public BaseBounty listing; funding not independently verified from this payload."]
+        whyUnclaimed: bond ? "Worker bond/upfront capital is required." : "Open listing detected; task rules and acceptance criteria still require verification.",
+        evidence: funded ? ["Listing reports funded escrow."] : ["Public BaseBounty listing; funding not independently verified from this payload."]
       };
     }
   },
@@ -97,15 +104,11 @@ const sources = [
         requiresUpfrontSpend: bond > 0,
         successProbability: null,
         feesUsd: 0,
-        whyUnclaimed: worker
-          ? "Worker identity is available; funded status, machine-executable contract and task fit gate action."
-          : "Worker identity unavailable this run.",
+        whyUnclaimed: worker ? "Worker identity is available; funded status, machine-executable contract and task fit gate action." : "Worker identity unavailable this run.",
         evidence: [
           "Public BasedAgents task API",
           funded ? "Escrow reports funded." : "Escrow funding not verified.",
-          (raw.machine_executable === true || raw.automation_spec?.version === 1)
-            ? "Machine-executable contract present."
-            : "No supported machine-executable contract detected."
+          (raw.machine_executable === true || raw.automation_spec?.version === 1) ? "Machine-executable contract present." : "No supported machine-executable contract detected."
         ]
       };
     }
@@ -115,12 +118,10 @@ const sources = [
 const result = await hunt(sources);
 
 const autoClaims = [];
-if (worker) {
+const autoClaimEnabled = process.env.CLAIM_SCOUT_AUTO_CLAIM === "enabled";
+if (worker && autoClaimEnabled) {
   try {
-    const payload = await fetchJsonFeed({
-      name: "BasedAgents",
-      url: "https://api.basedagents.ai/v1/tasks?status=open"
-    });
+    const payload = await fetchJsonFeed({ name: "BasedAgents", url: "https://api.basedagents.ai/v1/tasks?status=open" });
     const tasks = payload?.tasks || payload?.items || payload?.data || (Array.isArray(payload) ? payload : []);
     for (const task of tasks) {
       const gate = canAutoClaim(task);
@@ -137,34 +138,32 @@ if (worker) {
   }
 }
 
+let memorySave = { saved: false, reason: memoryLoad.available ? "not-attempted" : "memory-environment-unavailable" };
+if (memoryLoad.available && memoryLoad.loaded) {
+  try {
+    memorySave = await saveDurableMemory(exportLedger());
+  } catch (error) {
+    memorySave = { saved: false, reason: error?.message || String(error) };
+  }
+}
+
 const compact = {
   scout: "Claim Scout #1",
   mode: "zero-spend-earning",
   ranAt: result.scannedAt,
-  worker: worker ? {
-    agentId: worker.agentId,
-    payoutAddress: worker.payout.address,
-    payoutNetwork: worker.payout.network,
-    payoutVerified: worker.payout.verified
-  } : null,
+  worker: worker ? { agentId: worker.agentId, payoutAddress: worker.payout.address, payoutNetwork: worker.payout.network, payoutVerified: worker.payout.verified } : null,
   workerError,
   discovered: result.found.length,
   open: result.open.length,
   investigate: result.investigate.length,
+  autoClaimEnabled,
   autoClaims,
+  memory: { load: memoryLoad, save: memorySave, ledger: ledgerSummary() },
   errors: result.errors,
   top: result.found
     .sort((a, b) => Number(b?.valuation?.rewardUsd || 0) - Number(a?.valuation?.rewardUsd || 0))
     .slice(0, 10)
-    .map(x => ({
-      source: x.source,
-      title: x.title,
-      ownership: x.ownershipStatus,
-      rewardUsd: x.valuation?.rewardUsd,
-      expectedNetUsd: x.valuation?.expectedNetUsd,
-      missingChecks: x.verification?.missingChecks,
-      url: x.url
-    }))
+    .map(x => ({ source: x.source, title: x.title, ownership: x.ownershipStatus, rewardUsd: x.valuation?.rewardUsd, expectedNetUsd: x.valuation?.expectedNetUsd, missingChecks: x.verification?.missingChecks, seenCount: x.seenCount, firstSeenAt: x.firstSeenAt, url: x.url }))
 };
 
 console.log(JSON.stringify(compact, null, 2));
