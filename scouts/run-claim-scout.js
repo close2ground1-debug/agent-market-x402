@@ -30,6 +30,20 @@ function escrowFunded(raw = {}) {
   return String(raw?.escrow?.status || raw.escrow_status || "").toLowerCase() === "funded";
 }
 
+function bountyBoardMoney(raw = {}) {
+  // BountyBoard documents API monetary amounts in minor units (e.g. 9000 = 90.00).
+  const minor = raw.reward ?? raw.amount ?? raw.rewardAmount ?? null;
+  const currency = String(raw.currency || raw.currencyCode || "USD").toUpperCase();
+  const nativeAmount = minor === null || minor === undefined || !Number.isFinite(Number(minor))
+    ? null
+    : Number(minor) / 100;
+  return {
+    rewardUsd: currency === "USD" ? nativeAmount : null,
+    rewardNativeAmount: nativeAmount,
+    rewardNativeCurrency: currency
+  };
+}
+
 const sources = [
   {
     name: "BountyBoard",
@@ -40,7 +54,7 @@ const sources = [
       title: raw.title,
       description: raw.description,
       url: raw.url || (raw.id ? `https://www.bountyboard.work/bounties/${raw.id}` : null),
-      rewardUsd: Number(raw.rewardUsd || raw.reward || raw.amount || 0),
+      ...bountyBoardMoney(raw),
       deadline: raw.deadline || raw.expiresAt || null,
       explicitlyOpen: String(raw.status || "").toUpperCase() === "OPEN",
       eligible: false,
@@ -163,7 +177,7 @@ const compact = {
   top: result.found
     .sort((a, b) => Number(b?.valuation?.rewardUsd || 0) - Number(a?.valuation?.rewardUsd || 0))
     .slice(0, 10)
-    .map(x => ({ source: x.source, title: x.title, ownership: x.ownershipStatus, rewardUsd: x.valuation?.rewardUsd, expectedNetUsd: x.valuation?.expectedNetUsd, missingChecks: x.verification?.missingChecks, seenCount: x.seenCount, firstSeenAt: x.firstSeenAt, url: x.url }))
+    .map(x => ({ source: x.source, title: x.title, ownership: x.ownershipStatus, rewardUsd: x.valuation?.rewardUsd, rewardNativeAmount: x.valuation?.rewardNativeAmount, rewardNativeCurrency: x.valuation?.rewardNativeCurrency, expectedNetUsd: x.valuation?.expectedNetUsd, missingChecks: x.verification?.missingChecks, seenCount: x.seenCount, firstSeenAt: x.firstSeenAt, url: x.url }))
 };
 
 console.log(JSON.stringify(compact, null, 2));
