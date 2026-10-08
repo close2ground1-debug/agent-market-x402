@@ -21,7 +21,15 @@ export const claimScout = Object.freeze({
 
 export function classifyOwnership(opportunity = {}) {
   if (opportunity.ownedByOther === true || opportunity.requiresUnauthorizedAccess === true) return CLAIM_STATUS.HANDS_OFF;
-  if (opportunity.explicitlyOpen === true && opportunity.eligible === true && opportunity.rulesVerified === true) return CLAIM_STATUS.OPEN;
+
+  const open = opportunity.explicitlyOpen === true;
+  const eligible = opportunity.eligible === true;
+  const rules = opportunity.rulesVerified === true;
+  const funded = opportunity.fundingVerified === true || opportunity.rewardUsd === 0;
+  const noUpfrontSpend = opportunity.requiresUpfrontSpend !== true;
+  const issuerOkay = opportunity.issuerVerified !== false;
+
+  if (open && eligible && rules && funded && noUpfrontSpend && issuerOkay) return CLAIM_STATUS.OPEN;
   return CLAIM_STATUS.INVESTIGATE;
 }
 
@@ -31,14 +39,38 @@ export function scoreOpportunity(opportunity = {}) {
   const toolCost = Number(opportunity.toolCostUsd || 0);
   const computeCost = Number(opportunity.computeCostUsd || 0);
   const laborCost = Number(opportunity.laborCostUsd || 0);
-  const successProbability = Math.max(0, Math.min(1, Number(opportunity.successProbability ?? 0.5)));
   const totalCost = fees + toolCost + computeCost + laborCost;
-  const expectedGross = reward * successProbability;
-  const expectedNet = expectedGross - totalCost;
-  return { rewardUsd: reward, totalCostUsd: totalCost, successProbability, expectedGrossUsd: expectedGross, expectedNetUsd: expectedNet, worthwhile: expectedNet > 0 };
+
+  const rawProbability = opportunity.successProbability;
+  const probabilityKnown = Number.isFinite(Number(rawProbability));
+  const successProbability = probabilityKnown
+    ? Math.max(0, Math.min(1, Number(rawProbability)))
+    : null;
+
+  const expectedGross = probabilityKnown ? reward * successProbability : null;
+  const expectedNet = probabilityKnown ? expectedGross - totalCost : null;
+
+  return {
+    rewardUsd: reward,
+    totalCostUsd: totalCost,
+    successProbability,
+    probabilityKnown,
+    expectedGrossUsd: expectedGross,
+    expectedNetUsd: expectedNet,
+    worthwhile: probabilityKnown ? expectedNet > 0 : false,
+    valuationComplete: probabilityKnown
+  };
 }
 
 export function makeObservation(opportunity = {}) {
+  const missingChecks = [];
+  if (opportunity.explicitlyOpen !== true) missingChecks.push("open-status");
+  if (opportunity.eligible !== true) missingChecks.push("eligibility");
+  if (opportunity.rulesVerified !== true) missingChecks.push("rules");
+  if (opportunity.fundingVerified !== true && Number(opportunity.rewardUsd || 0) > 0) missingChecks.push("funding");
+  if (opportunity.requiresUpfrontSpend === true) missingChecks.push("upfront-spend");
+  if (opportunity.issuerVerified === false) missingChecks.push("issuer");
+
   return {
     scout: claimScout.name,
     observedAt: new Date().toISOString(),
@@ -52,13 +84,22 @@ export function makeObservation(opportunity = {}) {
     valuation: scoreOpportunity(opportunity),
     whyUnclaimed: opportunity.whyUnclaimed || "unknown",
     evidence: opportunity.evidence || [],
+    verification: {
+      rulesVerified: opportunity.rulesVerified === true,
+      fundingVerified: opportunity.fundingVerified === true,
+      issuerVerified: opportunity.issuerVerified !== false,
+      eligible: opportunity.eligible === true,
+      requiresUpfrontSpend: opportunity.requiresUpfrontSpend === true,
+      missingChecks
+    },
     notes: opportunity.notes || null
   };
 }
 
 export function mayAct(observation) {
   if (observation?.ownershipStatus === CLAIM_STATUS.HANDS_OFF) return { allowed: false, reason: "Owned/restricted: hands off." };
-  if (observation?.ownershipStatus !== CLAIM_STATUS.OPEN) return { allowed: false, reason: "Eligibility or ownership is not verified yet." };
+  if (observation?.ownershipStatus !== CLAIM_STATUS.OPEN) return { allowed: false, reason: "Eligibility, ownership, funding, or rules are not fully verified yet." };
+  if (!observation?.valuation?.valuationComplete) return { allowed: false, reason: "Expected value cannot be estimated from evidence yet." };
   if (!observation?.valuation?.worthwhile) return { allowed: false, reason: "Expected net value is not positive." };
-  return { allowed: true, reason: "Verified open opportunity with positive expected net value." };
+  return { allowed: true, reason: "Verified open, funded, zero-upfront-spend opportunity with positive evidence-based expected net value." };
 }
