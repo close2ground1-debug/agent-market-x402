@@ -1,0 +1,38 @@
+name: Claim Scout Patrol
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: claim-scout-patrol
+  cancel-in-progress: false
+
+jobs:
+  patrol:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install --ignore-scripts
+
+      - name: Run Claim Scout
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CLAIM_SCOUT_MEMORY_ISSUE: "1"
+          CLAIM_SCOUT_AUTO_CLAIM: "disabled"
+        run: node scouts/run-claim-scout.js
