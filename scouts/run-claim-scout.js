@@ -15,6 +15,10 @@ try {
   workerError = error?.message || String(error);
 }
 
+function escrowFunded(raw = {}) {
+  return String(raw?.escrow?.status || raw.escrow_status || "").toLowerCase() === "funded";
+}
+
 const sources = [
   {
     name: "BountyBoard",
@@ -27,13 +31,16 @@ const sources = [
       url: raw.url || (raw.id ? `https://www.bountyboard.work/bounties/${raw.id}` : null),
       rewardUsd: Number(raw.rewardUsd || raw.reward || raw.amount || 0),
       deadline: raw.deadline || raw.expiresAt || null,
-      explicitlyOpen: String(raw.status || "OPEN").toUpperCase() === "OPEN",
+      explicitlyOpen: String(raw.status || "").toUpperCase() === "OPEN",
       eligible: false,
-      rulesVerified: true,
-      successProbability: 0.25,
-      feesUsd: Number(raw.rewardUsd || raw.reward || raw.amount || 0) * 0.10,
-      whyUnclaimed: "Requires fit, bid/claim, delivery and approval. Eligibility must be checked per bounty.",
-      evidence: ["Public BountyBoard OPEN listing"]
+      rulesVerified: false,
+      fundingVerified: false,
+      issuerVerified: null,
+      requiresUpfrontSpend: null,
+      successProbability: null,
+      feesUsd: 0,
+      whyUnclaimed: "Needs per-bounty verification of rules, eligibility, funding, fees and acceptance conditions.",
+      evidence: ["Public BountyBoard listing only; listing alone does not prove eligibility or funding."]
     })
   },
   {
@@ -43,6 +50,7 @@ const sources = [
     normalize: raw => {
       const payout = Number(raw.workerPayoutUsdc || raw.rewardUsdc || raw.reward || 0);
       const bond = Number(raw.workerBondUsdc || raw.worker_bond_usdc || 0);
+      const funded = escrowFunded(raw) || raw.funded === true;
       return {
         externalId: raw.jobId || raw.id,
         title: raw.title || raw.descriptionText || `BaseBounty ${raw.jobId || raw.id || "job"}`,
@@ -50,13 +58,20 @@ const sources = [
         url: raw.jobId ? `https://www.basebounty.app/bounty/${raw.jobId}` : "https://www.basebounty.app/browse",
         rewardUsd: payout,
         deadline: raw.deadline || null,
-        explicitlyOpen: true,
+        explicitlyOpen: String(raw.status || "open").toLowerCase() === "open",
         eligible: (raw.audience === "anyone" || raw.audience == null) && bond === 0,
-        rulesVerified: true,
-        successProbability: 0.35,
-        feesUsd: payout ? payout * 0.01 : 0,
-        whyUnclaimed: bond ? "Open work but worker bond/upfront capital is required." : "Open work awaiting a qualified worker.",
-        evidence: ["Public BaseBounty on-chain-backed API"]
+        rulesVerified: false,
+        fundingVerified: funded,
+        issuerVerified: null,
+        requiresUpfrontSpend: bond > 0,
+        successProbability: null,
+        feesUsd: 0,
+        whyUnclaimed: bond
+          ? "Worker bond/upfront capital is required."
+          : "Open listing detected; task rules and acceptance criteria still require verification.",
+        evidence: funded
+          ? ["Listing reports funded escrow."]
+          : ["Public BaseBounty listing; funding not independently verified from this payload."]
       };
     }
   },
@@ -64,20 +79,36 @@ const sources = [
     name: "BasedAgents",
     url: "https://api.basedagents.ai/v1/tasks?status=open",
     extract: payload => payload?.tasks || payload?.items || payload?.data || (Array.isArray(payload) ? payload : []),
-    normalize: raw => ({
-      externalId: raw.task_id || raw.id,
-      title: raw.title,
-      description: raw.description,
-      url: (raw.task_id || raw.id) ? `https://registry.basedagents.ai/tasks/${raw.task_id || raw.id}` : "https://registry.basedagents.ai/tasks",
-      rewardUsd: Number(raw.bounty_display || raw.bounty_usdc || raw.bounty || raw.reward || 0),
-      deadline: raw.deadline || raw.expires_at || null,
-      explicitlyOpen: String(raw.status || "open").toLowerCase() === "open",
-      eligible: Boolean(worker),
-      rulesVerified: true,
-      successProbability: 0.30,
-      whyUnclaimed: worker ? "Registered worker identity available; task fit and executable contract still gate claiming." : "Worker identity unavailable this run.",
-      evidence: ["Public BasedAgents task API"]
-    })
+    normalize: raw => {
+      const funded = escrowFunded(raw);
+      const bond = Number(raw.worker_bond_usdc || raw.workerBondUsdc || 0);
+      return {
+        externalId: raw.task_id || raw.id,
+        title: raw.title,
+        description: raw.description,
+        url: (raw.task_id || raw.id) ? `https://registry.basedagents.ai/tasks/${raw.task_id || raw.id}` : "https://registry.basedagents.ai/tasks",
+        rewardUsd: Number(raw.bounty_display || raw.bounty_usdc || raw.bounty || raw.reward || 0),
+        deadline: raw.deadline || raw.expires_at || null,
+        explicitlyOpen: String(raw.status || "open").toLowerCase() === "open",
+        eligible: Boolean(worker) && bond === 0,
+        rulesVerified: Boolean(raw.machine_executable === true || raw.automation_spec?.version === 1),
+        fundingVerified: funded,
+        issuerVerified: null,
+        requiresUpfrontSpend: bond > 0,
+        successProbability: null,
+        feesUsd: 0,
+        whyUnclaimed: worker
+          ? "Worker identity is available; funded status, machine-executable contract and task fit gate action."
+          : "Worker identity unavailable this run.",
+        evidence: [
+          "Public BasedAgents task API",
+          funded ? "Escrow reports funded." : "Escrow funding not verified.",
+          (raw.machine_executable === true || raw.automation_spec?.version === 1)
+            ? "Machine-executable contract present."
+            : "No supported machine-executable contract detected."
+        ]
+      };
+    }
   }
 ];
 
@@ -123,9 +154,17 @@ const compact = {
   autoClaims,
   errors: result.errors,
   top: result.found
-    .sort((a, b) => Number(b?.valuation?.expectedNetUsd || 0) - Number(a?.valuation?.expectedNetUsd || 0))
+    .sort((a, b) => Number(b?.valuation?.rewardUsd || 0) - Number(a?.valuation?.rewardUsd || 0))
     .slice(0, 10)
-    .map(x => ({ source: x.source, title: x.title, ownership: x.ownershipStatus, expectedNetUsd: x.valuation?.expectedNetUsd, url: x.url }))
+    .map(x => ({
+      source: x.source,
+      title: x.title,
+      ownership: x.ownershipStatus,
+      rewardUsd: x.valuation?.rewardUsd,
+      expectedNetUsd: x.valuation?.expectedNetUsd,
+      missingChecks: x.verification?.missingChecks,
+      url: x.url
+    }))
 };
 
 console.log(JSON.stringify(compact, null, 2));
