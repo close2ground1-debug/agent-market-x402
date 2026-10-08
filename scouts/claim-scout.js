@@ -25,11 +25,12 @@ export function classifyOwnership(opportunity = {}) {
   const open = opportunity.explicitlyOpen === true;
   const eligible = opportunity.eligible === true;
   const rules = opportunity.rulesVerified === true;
-  const funded = opportunity.fundingVerified === true || opportunity.rewardUsd === 0;
+  const funded = opportunity.fundingVerified === true || Number(opportunity.rewardUsd || 0) === 0;
   const noUpfrontSpend = opportunity.requiresUpfrontSpend !== true;
   const issuerOkay = opportunity.issuerVerified !== false;
+  const contentSafe = opportunity.contentSafe !== false;
 
-  if (open && eligible && rules && funded && noUpfrontSpend && issuerOkay) return CLAIM_STATUS.OPEN;
+  if (open && eligible && rules && funded && noUpfrontSpend && issuerOkay && contentSafe) return CLAIM_STATUS.OPEN;
   return CLAIM_STATUS.INVESTIGATE;
 }
 
@@ -42,7 +43,7 @@ export function scoreOpportunity(opportunity = {}) {
   const totalCost = fees + toolCost + computeCost + laborCost;
 
   const rawProbability = opportunity.successProbability;
-  const probabilityKnown = Number.isFinite(Number(rawProbability));
+  const probabilityKnown = rawProbability !== null && rawProbability !== undefined && Number.isFinite(Number(rawProbability));
   const successProbability = probabilityKnown
     ? Math.max(0, Math.min(1, Number(rawProbability)))
     : null;
@@ -70,6 +71,7 @@ export function makeObservation(opportunity = {}) {
   if (opportunity.fundingVerified !== true && Number(opportunity.rewardUsd || 0) > 0) missingChecks.push("funding");
   if (opportunity.requiresUpfrontSpend === true) missingChecks.push("upfront-spend");
   if (opportunity.issuerVerified === false) missingChecks.push("issuer");
+  if (opportunity.contentSafe === false) missingChecks.push("suspicious-content");
 
   return {
     scout: claimScout.name,
@@ -90,6 +92,7 @@ export function makeObservation(opportunity = {}) {
       issuerVerified: opportunity.issuerVerified !== false,
       eligible: opportunity.eligible === true,
       requiresUpfrontSpend: opportunity.requiresUpfrontSpend === true,
+      contentSafe: opportunity.contentSafe !== false,
       missingChecks
     },
     notes: opportunity.notes || null
@@ -98,8 +101,8 @@ export function makeObservation(opportunity = {}) {
 
 export function mayAct(observation) {
   if (observation?.ownershipStatus === CLAIM_STATUS.HANDS_OFF) return { allowed: false, reason: "Owned/restricted: hands off." };
-  if (observation?.ownershipStatus !== CLAIM_STATUS.OPEN) return { allowed: false, reason: "Eligibility, ownership, funding, or rules are not fully verified yet." };
+  if (observation?.ownershipStatus !== CLAIM_STATUS.OPEN) return { allowed: false, reason: "Eligibility, ownership, funding, rules, issuer trust, or content safety is not fully verified yet." };
   if (!observation?.valuation?.valuationComplete) return { allowed: false, reason: "Expected value cannot be estimated from evidence yet." };
   if (!observation?.valuation?.worthwhile) return { allowed: false, reason: "Expected net value is not positive." };
-  return { allowed: true, reason: "Verified open, funded, zero-upfront-spend opportunity with positive evidence-based expected net value." };
+  return { allowed: true, reason: "Verified open, funded, zero-upfront-spend opportunity with safe content and positive evidence-based expected net value." };
 }
