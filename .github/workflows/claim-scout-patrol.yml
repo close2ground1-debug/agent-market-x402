@@ -39,4 +39,4 @@ jobs:
           CLAIM_SCOUT_AUTO_CLAIM: "disabled"
         run: node scouts/run-claim-scout.js
 
-# Validation marker: second persistence proof run
+# Validation marker: reward normalization proof
