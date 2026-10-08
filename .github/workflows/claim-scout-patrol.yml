@@ -38,3 +38,5 @@ jobs:
           CLAIM_SCOUT_MEMORY_ISSUE: "1"
           CLAIM_SCOUT_AUTO_CLAIM: "disabled"
         run: node scouts/run-claim-scout.js
+
+# Validation marker: second persistence proof run
