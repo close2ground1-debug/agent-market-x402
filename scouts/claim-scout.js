@@ -25,7 +25,9 @@ export function classifyOwnership(opportunity = {}) {
   const open = opportunity.explicitlyOpen === true;
   const eligible = opportunity.eligible === true;
   const rules = opportunity.rulesVerified === true;
-  const funded = opportunity.fundingVerified === true || Number(opportunity.rewardUsd || 0) === 0;
+  const rewardKnown = opportunity.rewardUsd !== null && opportunity.rewardUsd !== undefined && Number.isFinite(Number(opportunity.rewardUsd));
+  const zeroRewardKnown = rewardKnown && Number(opportunity.rewardUsd) === 0;
+  const funded = opportunity.fundingVerified === true || zeroRewardKnown;
   const noUpfrontSpend = opportunity.requiresUpfrontSpend !== true;
   const issuerOkay = opportunity.issuerVerified !== false;
   const contentSafe = opportunity.contentSafe !== false;
@@ -35,7 +37,9 @@ export function classifyOwnership(opportunity = {}) {
 }
 
 export function scoreOpportunity(opportunity = {}) {
-  const reward = Number(opportunity.rewardUsd || 0);
+  const rawReward = opportunity.rewardUsd;
+  const rewardKnown = rawReward !== null && rawReward !== undefined && Number.isFinite(Number(rawReward));
+  const reward = rewardKnown ? Number(rawReward) : null;
   const fees = Number(opportunity.feesUsd || 0);
   const toolCost = Number(opportunity.toolCostUsd || 0);
   const computeCost = Number(opportunity.computeCostUsd || 0);
@@ -48,18 +52,21 @@ export function scoreOpportunity(opportunity = {}) {
     ? Math.max(0, Math.min(1, Number(rawProbability)))
     : null;
 
-  const expectedGross = probabilityKnown ? reward * successProbability : null;
-  const expectedNet = probabilityKnown ? expectedGross - totalCost : null;
+  const expectedGross = probabilityKnown && rewardKnown ? reward * successProbability : null;
+  const expectedNet = probabilityKnown && rewardKnown ? expectedGross - totalCost : null;
 
   return {
     rewardUsd: reward,
+    rewardKnown,
+    rewardNativeAmount: opportunity.rewardNativeAmount ?? null,
+    rewardNativeCurrency: opportunity.rewardNativeCurrency ?? null,
     totalCostUsd: totalCost,
     successProbability,
     probabilityKnown,
     expectedGrossUsd: expectedGross,
     expectedNetUsd: expectedNet,
-    worthwhile: probabilityKnown ? expectedNet > 0 : false,
-    valuationComplete: probabilityKnown
+    worthwhile: probabilityKnown && rewardKnown ? expectedNet > 0 : false,
+    valuationComplete: probabilityKnown && rewardKnown
   };
 }
 
@@ -68,7 +75,10 @@ export function makeObservation(opportunity = {}) {
   if (opportunity.explicitlyOpen !== true) missingChecks.push("open-status");
   if (opportunity.eligible !== true) missingChecks.push("eligibility");
   if (opportunity.rulesVerified !== true) missingChecks.push("rules");
-  if (opportunity.fundingVerified !== true && Number(opportunity.rewardUsd || 0) > 0) missingChecks.push("funding");
+  const rawReward = opportunity.rewardUsd;
+  const rewardKnown = rawReward !== null && rawReward !== undefined && Number.isFinite(Number(rawReward));
+  if (!rewardKnown) missingChecks.push("usd-valuation");
+  if (opportunity.fundingVerified !== true && (!rewardKnown || Number(rawReward) > 0)) missingChecks.push("funding");
   if (opportunity.requiresUpfrontSpend === true) missingChecks.push("upfront-spend");
   if (opportunity.issuerVerified === false) missingChecks.push("issuer");
   if (opportunity.contentSafe === false) missingChecks.push("suspicious-content");
