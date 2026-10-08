@@ -10,6 +10,7 @@
     "@x402/evm": "^2.17.0",
     "@x402/express": "^2.17.0",
     "@x402/extensions": "^2.17.0",
+    "basedagents": "latest",
     "express": "^5.1.0"
   }
 }
