@@ -4,6 +4,9 @@ on:
   schedule:
     - cron: "*/15 * * * *"
   workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/claim-scout-patrol.yml"
 
 permissions:
   contents: read
