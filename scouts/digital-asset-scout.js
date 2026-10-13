@@ -45,13 +45,13 @@ export async function scout(mission,{request=get,clock=new Date()}={}){
  return {scout:'Indiana',mode:'digital-asset-scout',mission,ranAt:clock.toISOString(),queries,findings,domains,errors,receivedUsd:0,actions:'Read-only discovery; no purchases, registrations or claims performed'};
 }
 export function reportMarkdown(r){
- const out=['# Indiana — Digital Asset Scout',r.ranAt,'','## Exact mission',r.mission,'','## Findings'];
+ const out=['# Indiana — Digital Asset Scout',r.ranAt,'','## Exact mission',r.mission,'','## Additional user context (mission unchanged)',r.assetContext||'None supplied','','## Findings'];
  for(const f of r.findings)out.push('','### '+f.name,'- Source: '+(f.source||f.url),'- Description: '+f.description,'- Rights: '+f.rights,'- Rights evidence: '+f.rightsEvidence,'- Access: '+f.access,'- Commercial potential (unverified): '+f.potential,...(f.contact?['- Contact: '+f.contact]:[]));
  out.push('','## Domain checks',...r.domains.map(d=>'- '+d.name+': '+d.status+'. '+(d.access||'No availability established.')), '', '## Collection errors',...r.errors.map(e=>'- '+e.source+': '+e.error),'',r.actions);
  return out.join('\n')+'\n';
 }
-export async function run(mission){
- const r=await scout(mission),md=reportMarkdown(r);
+export async function run(mission,assetContext='') {
+ const r=await scout(mission);r.assetContext=assetContext;const md=reportMarkdown(r);
  await writeFile('indy-digital-assets.json',JSON.stringify(r,null,2));
  await writeFile('indy-digital-assets.md',md);
  if(process.env.GITHUB_STEP_SUMMARY)await writeFile(process.env.GITHUB_STEP_SUMMARY,md,{flag:'a'});
