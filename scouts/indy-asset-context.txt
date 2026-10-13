@@ -1,0 +1,6 @@
+these assets\
+**Information Sources:** Websites, databases, social media platforms, or private networks that hold valuable data.
+
+- **Infrastructure:** Critical systems like power grids, communication networks, or transportation hubs.
+- **Financial Assets:** Bank accounts, cryptocurrency wallets, or stock portfolios.
+- **Reputational Assets:** Public image, brand loyalty, or individual credibility.
