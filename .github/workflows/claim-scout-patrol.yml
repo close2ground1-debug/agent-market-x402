@@ -34,7 +34,7 @@ jobs:
         run: npm install --ignore-scripts
 
       - name: Validate patrol evidence and memory
-        run: node --test scouts/repair.test.js
+        run: node --test scouts/repair.test.js scouts/digital-asset.test.js
 
       - name: Run Claim Scout
         env:
@@ -44,3 +44,14 @@ jobs:
         run: node scouts/run-claim-scout.js
 
 # Validation marker: reward normalization proof
+
+      - name: Save digital asset findings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: indy-digital-assets-${{ github.run_id }}
+          path: |
+            indy-digital-assets.json
+            indy-digital-assets.md
+          if-no-files-found: warn
+          retention-days: 30
