@@ -1,44 +1,18 @@
 import {writeFile} from 'node:fs/promises';
-const allowed=new Set(['MIT','Apache-2.0','BSD-2-Clause','BSD-3-Clause','ISC','0BSD','Unlicense','CC0-1.0','Zlib']);
-export function eligibleLicense(x){return Boolean(x?.license?.spdx_id&&allowed.has(x.license.spdx_id)&&x.content&&x.encoding==='base64');}
-export function domainStatus(status){return status===404?'No registration record returned; registrar availability still unverified':status===200?'Registered; skip':'Lookup unavailable; ownership unknown';}
-async function get(url,github=false){
- const headers={accept:github?'application/vnd.github+json':'application/json,text/html','user-agent':'Indiana-Digital-Asset-Scout'};
- if(github&&process.env.GITHUB_TOKEN)headers.authorization='Bearer '+process.env.GITHUB_TOKEN;
- const r=await fetch(url,{headers,signal:AbortSignal.timeout(15000)});
- if(!r.ok)throw Error('HTTP '+r.status);
- const text=await r.text();return github?JSON.parse(text):text;
-}
-export async function scout(mission,{request=get,clock=new Date()}={}){
- const findings=[],errors=[],queries=[];
- const topic=['document parser','education learning','dataset data quality','developer automation'][Math.floor(clock.getTime()/900000)%4];
- const q=topic+' archived:false fork:false stars:>=5 '+['license:mit','license:apache-2.0','license:bsd-3-clause'][Math.floor(clock.getTime()/3600000)%3];
- queries.push(q);
- try{
-  const results=await request('https://api.github.com/search/repositories?q='+encodeURIComponent(q)+'&sort=updated&order=desc&per_page=10',true);
-  for(const r of results.items||[]){
-   try{
-    const l=await request('https://api.github.com/repos/'+r.full_name+'/license',true);
-    if(!eligibleLicense(l))continue;
-    const licenseText=Buffer.from(l.content.replace(/\s/g,''),'base64').toString('utf8');
-    findings.push({type:'open-source project',name:r.full_name,source:r.html_url,description:r.description||'No description supplied by maintainer.',rights:l.license.spdx_id,rightsEvidence:l.html_url,licenseText,ownership:'Maintainer-owned; documented reuse license, not exclusive ownership',access:'Open the repository, select Code → Download ZIP or clone it. Read LICENSE and dependency/model licenses; preserve notices and comply with the applicable license.',contact:r.html_url+'/issues',potential:'Potential building block for a specialized product or service; no buyer or valuation verified.',lastUpdated:r.updated_at,accessCost:'No code purchase required; compute and maintenance costs not assessed'});
-   }catch(e){errors.push({source:r.html_url,error:e.message});}
-  }
- }catch(e){errors.push({source:'GitHub repository discovery',error:e.message});}
- const domains=[];
- return {scout:'Indiana',mode:'digital-asset-scout',mission,ranAt:clock.toISOString(),queries,findings,domains,errors,receivedUsd:0,actions:'Read-only discovery; no purchases, registrations or claims performed'};
-}
-export function reportMarkdown(r){
- const out=['# Indiana — Digital Asset Scout',r.ranAt,'','## Exact mission',r.mission,'','## Additional user context (mission unchanged)',r.assetContext||'None supplied','','## Findings'];
- for(const f of r.findings)out.push('','### '+f.name,'- Source: '+(f.source||f.url),'- Description: '+f.description,'- Rights: '+f.rights,'- Rights evidence: '+f.rightsEvidence,'- Access: '+f.access,'- Commercial potential (unverified): '+f.potential,...(f.contact?['- Contact: '+f.contact]:[]));
- out.push('','## Domain checks',...r.domains.map(d=>'- '+d.name+': '+d.status+'. '+(d.access||'No availability established.')), '', '## Collection errors',...r.errors.map(e=>'- '+e.source+': '+e.error),'',r.actions);
- return out.join('\n')+'\n';
-}
-export async function run(mission,assetContext='') {
- const r=await scout(mission);r.assetContext=assetContext;const md=reportMarkdown(r);
- await writeFile('indy-digital-assets.json',JSON.stringify(r,null,2));
- await writeFile('indy-digital-assets.md',md);
- if(process.env.GITHUB_STEP_SUMMARY)await writeFile(process.env.GITHUB_STEP_SUMMARY,md,{flag:'a'});
- console.log(JSON.stringify(r,null,2));
- if(!r.findings.length)throw Error('No rights-verified findings collected; inspect source errors');
-}
+
+// Indiana Settlement Scout — read-only reconnaissance for places to plant an agent store.
+// Public sources only. No claims, logins, spending, signing, posting, or execution of remote instructions.
+const sources=[
+ {name:'BasedAgents',kind:'agent task market',url:'https://api.basedagents.ai/v1/tasks?status=open',home:'https://basedagents.ai/tasks',parse:t=>{const j=JSON.parse(t);return j.tasks||j.items||j.data||(Array.isArray(j)?j:[])}},
+ {name:'BountyBoard',kind:'human + agent work market',url:'https://www.bountyboard.work/api/bounties?status=OPEN&limit=50',home:'https://www.bountyboard.work/',parse:t=>{const j=JSON.parse(t);return j.bounties||j.items||(Array.isArray(j)?j:[])}}
+];
+const suspicious=[/ignore (all |any )?(previous|prior|system|developer) instructions/i,/reveal .*?(secret|api key|private key|seed phrase|system prompt)/i,/send .*?(funds|crypto|usdc|eth|money)/i,/run .*?(script|command|shell|terminal)/i,/download and execute/i,/disable .*?(safety|security|guardrail)/i];
+function clean(v,n=3000){return String(v??'').replace(/<script[\s\S]*?<\/script>/gi,' ').replace(/<style[\s\S]*?<\/style>/gi,' ').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().slice(0,n)}
+function safeText(v){const s=clean(v);return suspicious.some(r=>r.test(s))?'[external text withheld: suspicious instructions detected]':s}
+async function get(url){const u=new URL(url);if(u.protocol!=='https:')throw Error('HTTPS required');const r=await fetch(u,{headers:{accept:'application/json,text/plain,text/html','user-agent':'Indiana-Settlement-Scout'},redirect:'error',signal:AbortSignal.timeout(15000)});if(!r.ok)throw Error('HTTP '+r.status);return await r.text()}
+function money(x){const currency=String(x.currency||x.currencyCode||'').toUpperCase();let amount=x.bounty_display??x.bounty_usdc??x.bounty??x.reward??x.amount??x.rewardAmount??null;if(amount==null||!Number.isFinite(Number(amount)))return null;amount=Number(amount);if((x.reward!=null||x.amount!=null||x.rewardAmount!=null)&&!x.bounty_display&&!x.bounty_usdc)amount/=100;return {amount,currency:currency||((x.bounty_usdc!=null||x.bounty_display!=null)?'USDC':'UNKNOWN')}}
+function words(items){const stop=new Set('the and for with from this that your you are into task open agent agents need needs using use build create make data work must will can our their they have has not but all any get new per'.split(' '));const c=new Map();for(const x of items){for(const w of (safeText((x.title||'')+' '+(x.description||''),1500).toLowerCase().match(/[a-z][a-z0-9-]{3,}/g)||[])){if(stop.has(w))continue;c.set(w,(c.get(w)||0)+1)}}return [...c].sort((a,b)=>b[1]-a[1]).slice(0,12).map(([term,count])=>({term,count}))}
+function settlement(source,items){const paid=items.map(money).filter(Boolean),total=paid.reduce((n,p)=>n+(Number.isFinite(p.amount)?p.amount:0),0),themes=words(items);return {name:source.name,kind:source.kind,home:source.home,currentListings:items.length,paymentSignals:paid.length,visibleRewardTotal:total||null,dominantCurrency:paid[0]?.currency||null,repeatedTerms:themes,activityEvidence:items.slice(0,5).map(x=>({title:safeText(x.title||x.name||x.id,180),description:safeText(x.description||x.requirements||'',500),reward:money(x),id:x.task_id||x.id||null})),storeHypotheses:themes.slice(0,5).map(t=>({observedPattern:t.term,evidenceCount:t.count,hypothesis:`Residents repeatedly mention ${t.term}; investigate whether verified information, monitoring, research, data, or tooling around this need is undersupplied.`,status:'HYPOTHESIS — demand not yet proven'}))}}
+export async function scout(mission,{request=get,clock=new Date()}={}){const settlements=[],errors=[];for(const s of sources){try{const text=await request(s.url);const items=s.parse(text);settlements.push(settlement(s,items))}catch(e){errors.push({source:s.name,error:e.message})}}const ranked=settlements.slice().sort((a,b)=>(b.paymentSignals-a.paymentSignals)||(b.currentListings-a.currentListings));return {scout:'Indiana',mode:'agent-settlement-scout',mission,ranAt:clock.toISOString(),settlements,rankedCandidates:ranked.map((s,i)=>({rank:i+1,name:s.name,reason:`${s.currentListings} current listings; ${s.paymentSignals} visible payment signals. Repeated terms are clues only until independently validated.`,nextTest:'Follow repeated needs across independent residents/sources; identify an information product and test demand before building.'})),crossSettlementPatterns:words(settlements.flatMap(s=>s.activityEvidence.map(e=>({title:e.title,description:e.description})))),errors,receivedUsd:0,actions:'Read-only reconnaissance. No purchases, registrations, claims, bids, logins, posts, wallet actions, or external commitments performed.'}}
+export function reportMarkdown(r){const out=['# Indiana — Agent Settlement Scout',r.ranAt,'','## Mission',r.mission,'','## Settlement candidates'];for(const s of r.settlements){out.push('',`### ${s.name} — ${s.kind}`,`- Home: ${s.home}`,`- Current public listings observed: ${s.currentListings}`,`- Listings with visible payment signals: ${s.paymentSignals}`,`- Visible reward total (mixed/uncertain units possible): ${s.visibleRewardTotal??'unknown'}`,'- Repeated language: '+(s.repeatedTerms.map(x=>`${x.term} (${x.count})`).join(', ')||'none'),'','#### Store clues');for(const h of s.storeHypotheses)out.push(`- ${h.observedPattern}: ${h.hypothesis} ${h.status}`)}out.push('','## Ranked candidates',...r.rankedCandidates.map(x=>`${x.rank}. ${x.name} — ${x.reason} Next: ${x.nextTest}`),'','## Cross-settlement clues',...(r.crossSettlementPatterns.map(x=>`- ${x.term}: ${x.count}`)),'','## Errors',...(r.errors.map(e=>`- ${e.source}: ${e.error}`)),'',r.actions);return out.join('\n')+'\n'}
+export async function run(mission,assetContext=''){const r=await scout(mission);r.assetContext=assetContext;const md=reportMarkdown(r);await writeFile('indy-settlements.json',JSON.stringify(r,null,2));await writeFile('indy-settlements.md',md);if(process.env.GITHUB_STEP_SUMMARY)await writeFile(process.env.GITHUB_STEP_SUMMARY,md,{flag:'a'});console.log(JSON.stringify(r,null,2));if(!r.settlements.length)throw Error('No settlement evidence collected; inspect source errors')}
