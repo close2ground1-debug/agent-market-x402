@@ -17,8 +17,20 @@ test('exact order retained, concrete access steps and failed sources reported',a
  if(gh)return {license:{spdx_id:'MIT'},content:'TUlUIExpY2Vuc2U=',encoding:'base64',html_url:'https://github.com/example/project/blob/main/LICENSE'};
  return 'CC0 CC BY-SA 3.0';
  }});
- assert.equal(r.mission,mission);assert.equal(r.findings.length,5);assert.equal(r.receivedUsd,0);
+ assert.equal(r.mission,mission);assert.equal(r.findings.length,1);assert.equal(r.receivedUsd,0);
  assert.ok(r.findings.every(x=>x.access&&x.rightsEvidence));assert.match(reportMarkdown(r),/Exact user order unchanged/);
- assert.ok(r.domains.every(x=>x.status.includes('unverified')));
+ assert.deepEqual(r.domains,[]);
  }finally{globalThis.fetch=saved;}
+});
+
+test('no seeded assets, catalog lookups or fixed domain checks',async()=>{
+ const saved=globalThis.fetch;globalThis.fetch=async()=>{throw Error('Unexpected fixed-domain request')};
+ const calls=[];
+ try{
+ const r=await scout('Exact order',{request:async(url)=>{calls.push(url);return {items:[]}}});
+ assert.deepEqual(r.findings,[]);
+ assert.deepEqual(r.domains,[]);
+ assert.equal(calls.length,1);
+ assert.match(calls[0],/^https:\/\/api\.github\.com\/search\/repositories\?/);
+ }finally{globalThis.fetch=saved}
 });
