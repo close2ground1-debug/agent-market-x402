@@ -17,7 +17,7 @@ function config() {
   const repo = process.env.GITHUB_REPOSITORY;
   const token = process.env.GITHUB_TOKEN;
   const issue = Number(process.env.CLAIM_SCOUT_MEMORY_ISSUE || 1);
-  if (!repo || !token || !issue) return null;
+  if (!repo || !issue) return null;
   return { repo, token, issue };
 }
 
@@ -28,7 +28,7 @@ async function api(path, options = {}) {
     ...options,
     headers: {
       Accept: "application/vnd.github+json",
-      Authorization: `Bearer ${cfg.token}`,
+      ...(cfg.token ? { Authorization: `Bearer ${cfg.token}` } : {}),
       "X-GitHub-Api-Version": "2022-11-28",
       "User-Agent": "claim-scout-memory",
       ...(options.headers || {})
@@ -43,11 +43,11 @@ function extract(body = "") {
   if (start < 0) return { ...DEFAULT_STATE };
   const jsonStart = start + MARKER_START.length;
   const end = body.indexOf(MARKER_END, jsonStart);
-  if (end < 0) return { ...DEFAULT_STATE };
+  if (end < 0) throw new Error("Notebook memory block is truncated; refusing to reset history");
   try {
     return { ...DEFAULT_STATE, ...JSON.parse(body.slice(jsonStart, end)) };
   } catch {
-    return { ...DEFAULT_STATE };
+    throw new Error("Notebook memory is invalid; refusing to reset history");
   }
 }
 
@@ -64,6 +64,8 @@ export function durableMemoryAvailable() {
   return Boolean(config());
 }
 
+export function durableMemoryWritable() { return Boolean(config()?.token); }
+
 export async function loadDurableMemory() {
   const cfg = config();
   if (!cfg) return { ...DEFAULT_STATE };
@@ -73,7 +75,7 @@ export async function loadDurableMemory() {
 
 export async function saveDurableMemory(state) {
   const cfg = config();
-  if (!cfg) return { saved: false, reason: "memory-environment-unavailable" };
+  if (!cfg?.token) return { saved: false, reason: "memory-read-only" };
   const issue = await api(`/repos/${cfg.repo}/issues/${cfg.issue}`);
   const body = replace(issue.body || "", state);
   await api(`/repos/${cfg.repo}/issues/${cfg.issue}`, {

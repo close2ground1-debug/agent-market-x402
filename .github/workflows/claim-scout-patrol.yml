@@ -7,6 +7,7 @@ on:
   push:
     paths:
       - ".github/workflows/claim-scout-patrol.yml"
+      - "scouts/**"
 
 permissions:
   contents: read
@@ -31,6 +32,9 @@ jobs:
 
       - name: Install dependencies
         run: npm install --ignore-scripts
+
+      - name: Validate patrol evidence and memory
+        run: node --test scouts/repair.test.js
 
       - name: Run Claim Scout
         env:

@@ -28,7 +28,7 @@ export function classifyOwnership(opportunity = {}) {
   const rewardKnown = opportunity.rewardUsd !== null && opportunity.rewardUsd !== undefined && Number.isFinite(Number(opportunity.rewardUsd));
   const zeroRewardKnown = rewardKnown && Number(opportunity.rewardUsd) === 0;
   const funded = opportunity.fundingVerified === true || zeroRewardKnown;
-  const noUpfrontSpend = opportunity.requiresUpfrontSpend !== true;
+  const noUpfrontSpend = opportunity.requiresUpfrontSpend === false;
   const issuerOkay = opportunity.issuerVerified !== false;
   const contentSafe = opportunity.contentSafe !== false;
 
@@ -79,7 +79,7 @@ export function makeObservation(opportunity = {}) {
   const rewardKnown = rawReward !== null && rawReward !== undefined && Number.isFinite(Number(rawReward));
   if (!rewardKnown) missingChecks.push("usd-valuation");
   if (opportunity.fundingVerified !== true && (!rewardKnown || Number(rawReward) > 0)) missingChecks.push("funding");
-  if (opportunity.requiresUpfrontSpend === true) missingChecks.push("upfront-spend");
+  if (opportunity.requiresUpfrontSpend !== false) missingChecks.push("upfront-spend");
   if (opportunity.issuerVerified === false) missingChecks.push("issuer");
   if (opportunity.contentSafe === false) missingChecks.push("suspicious-content");
 
@@ -101,7 +101,7 @@ export function makeObservation(opportunity = {}) {
       fundingVerified: opportunity.fundingVerified === true,
       issuerVerified: opportunity.issuerVerified !== false,
       eligible: opportunity.eligible === true,
-      requiresUpfrontSpend: opportunity.requiresUpfrontSpend === true,
+      requiresUpfrontSpend: opportunity.requiresUpfrontSpend ?? null,
       contentSafe: opportunity.contentSafe !== false,
       missingChecks
     },
