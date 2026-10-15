@@ -1,4 +1,4 @@
-name: Claim Scout Patrol
+name: Indiana Settlement Patrol
 
 on:
   schedule:
@@ -11,10 +11,9 @@ on:
 
 permissions:
   contents: read
-  issues: write
 
 concurrency:
-  group: claim-scout-patrol
+  group: indiana-settlement-patrol
   cancel-in-progress: false
 
 jobs:
@@ -33,25 +32,19 @@ jobs:
       - name: Install dependencies
         run: npm install --ignore-scripts
 
-      - name: Validate patrol evidence and memory
-        run: node --test scouts/repair.test.js scouts/digital-asset.test.js
+      - name: Validate Indiana settlement scout
+        run: node --test scouts/digital-asset.test.js
 
-      - name: Run Claim Scout
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CLAIM_SCOUT_MEMORY_ISSUE: "1"
-          CLAIM_SCOUT_AUTO_CLAIM: "disabled"
+      - name: Run Indiana Settlement Scout
         run: node scouts/run-claim-scout.js
 
-# Validation marker: reward normalization proof
-
-      - name: Save digital asset findings
+      - name: Save Indiana settlement report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: indy-digital-assets-${{ github.run_id }}
+          name: indy-settlements-${{ github.run_id }}
           path: |
-            indy-digital-assets.json
-            indy-digital-assets.md
+            indy-settlements.json
+            indy-settlements.md
           if-no-files-found: warn
           retention-days: 30
