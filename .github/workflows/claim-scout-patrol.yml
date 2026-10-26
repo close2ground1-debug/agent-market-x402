@@ -1,13 +1,8 @@
 name: Indiana Settlement Patrol
 
+# Indy is parked. Keep code and reports; run only when explicitly requested.
 on:
-  schedule:
-    - cron: "*/15 * * * *"
   workflow_dispatch:
-  push:
-    paths:
-      - ".github/workflows/claim-scout-patrol.yml"
-      - "scouts/**"
 
 permissions:
   contents: read
